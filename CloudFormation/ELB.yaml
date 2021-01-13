@@ -1,0 +1,289 @@
+#vpc-0ec0fe960b0e7d908
+#subnet-018dae2df3b0e7c64  private 1a
+#subnet-0146e0bfe03130d1f  private 1b
+#subnet-0501555ea2906aa31  public 1a
+#subnet-0bb80f94ad675dd2d  public 1b
+#sg-01259517a41e01f04 BE
+#sg-0dbc7ce490f08fb67 Public-Mentor-10-SG
+#ami-08437916891c56642 BE AMI
+#key
+
+Resources:
+  #  myVPC:
+  #    Type: AWS::EC2::VPC
+  #    Properties:
+  #      CidrBlock: 10.0.0.0/16
+  #      EnableDnsSupport: 'false'
+  #      EnableDnsHostnames: 'false'
+  #      InstanceTenancy: dedicated
+  #      Tags:
+  #      - Key: foo
+  #        Value: bar
+  #-------------------------------------------------------------
+  ALBSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Open Ports 80 to internet
+        VpcId: vpc-0ec0fe960b0e7d908
+        SecurityGroupIngress:
+        - Description: Allow HTTP
+          IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - Description: Allow HTTP
+          IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIpv6: ::/0
+          
+        #SecurityGroupIngress:
+        #- IpProtocol: tcp
+        #  FromPort: '80'
+        #  ToPort: '80'
+        #  CidrIp: 0.0.0.0/0
+        Tags:
+          - Key: Name
+            Value: "ALB-SEG-CF"
+  #-------------------------------------------------------------
+  BESecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open Ports 22 and 5000
+      VpcId: vpc-0ec0fe960b0e7d908
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        SourceSecurityGroupId: sg-0dbc7ce490f08fb67
+        #CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '5000'
+        ToPort: '5000'
+        SourceSecurityGroupId: #sg-0604f947494edfdc0
+                                Ref: ALBSecurityGroup
+        #CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: "BE-SEG-CF"
+  
+  #-------------------------------------------------------------
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId : subnet-018dae2df3b0e7c64
+      InstanceType: t2.micro
+      ImageId: ami-08437916891c56642
+      SecurityGroupIds:
+        - !Ref BESecurityGroup
+      Tags:
+        - Key: Name
+          Value: "BE-CF" #!Ref NameOfService
+      KeyName: "key" #!Ref KeyName
+      #UserData:
+      #  'Fn::Base64': 
+      #    !Sub |
+      #      #!/bin/bash -xe            
+      #      # Ensure AWS CFN Bootstrap is the latest
+      #      yum install -y aws-cfn-bootstrap
+      #      # Install the files and packages from the metadata
+      #      /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2Instance  --region ${AWS::Region}
+  
+  
+  
+  
+  #-------------------------------------------------------------
+  TargetGroup: 
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      #HealthCheckEnabled: True
+      #HealthCheckProtocol: HTTP
+      #HealthCheckPort: 5000
+      #UnhealthyThresholdCount: 2
+      #HealthyThresholdCount: 5
+      #HealthCheckIntervalSeconds: 30
+      #HealthCheckTimeoutSeconds: 5
+      #HealthCheckPath: /
+      #Matcher:
+      #  HttpCode: "204"
+      Name: Bahram-TG
+      Port: 5000
+      Protocol: HTTP
+      #Tags:
+      #- Key: Name
+      #  Value: 'rrrrrr'     eworkCategory catId
+      #- Key: Port
+      #  Value: 80
+
+      #TargetType: String
+      VpcId: vpc-0ec0fe960b0e7d908
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: '30'
+      Targets:
+      - Id: 
+          Ref : EC2Instance
+      #i-03c45872f49cc9333
+        Port: 5000
+  #------------------------------------------------------------- ELB (ALB)
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: TargetGroup
+      LoadBalancerArn:
+          Ref: ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+  
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing # or internal
+      Subnets: [subnet-0501555ea2906aa31,subnet-0bb80f94ad675dd2d] 
+      #- Ref: PubSubnetZoneA
+      #- Ref: PubSubnetZoneB
+      SecurityGroups:
+      - Ref: ALBSecurityGroup
+  
+  #-------------------------------------------------------------
+  BE_ASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+        Count: '2'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: '1'
+        MinInstancesInService: '1'
+        PauseTime: PT15M
+        WaitOnResourceSignals: 'true'
+    Properties:
+      AvailabilityZones: !GetAZs ''
+      LaunchConfigurationName: !Ref 'LaunchConfig'
+      MinSize: '2'
+      MaxSize: '4'
+      LoadBalancerNames: [!Ref 'ElasticLoadBalancer']
+  #-------------------------------------------------------------
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          full_install: [install_cfn, install_app, verify_instance_health]
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfig --configsets full_install --region ${AWS::Region}
+                runas=root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files: [/etc/cfn/cfn-hup.conf, /etc/cfn/hooks.d/cfn-auto-reloader.conf]
+        install_app:
+          packages:
+            yum:
+              httpd: []
+          files:
+            /var/www/html/index.html:
+              content: !Join
+                - ''
+                - - '<h1>Congratulations, you have successfully launched the AWS CloudFormation sample.</h1>'
+                  - '<p>Version: 1.0</p>'
+              mode: '000644'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+        verify_instance_health:
+          commands:
+            ELBHealthCheck:
+              command: !Sub
+                'until [ "$state" == "\"InService\"" ]; do state=$(aws --region ${AWS::Region} elb describe-instance-health
+                 --load-balancer-name ${ElasticLoadBalancer}
+                 --instances $(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                 --query InstanceStates[0].State); sleep 10; done'
+    Properties:
+      KeyName: !Ref 'KeyName'
+      ImageId: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', !FindInMap [AWSInstanceType2Arch,
+          !Ref 'InstanceType', Arch]]
+      InstanceType: !Ref 'InstanceType'
+      SecurityGroups: [!Ref 'InstanceSecurityGroup']
+      IamInstanceProfile: !Ref 'WebServerInstanceProfile'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum install -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource LaunchConfig --configsets full_install --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource WebServerGroup --region ${AWS::Region}
+
+
+  #-------------------------------------------------------------
+
+
+
+  #-------------------------------------------------------------
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  #bbSecurityGroup:
+  #  Type: AWS::EC2::SecurityGroup
+  #  Properties:
+  #    GroupDescription: Open Ports 22 and 80
+  #    VpcId: vpc-0ec0fe960b0e7d908
+  #    SecurityGroupIngress:
+  #    - IpProtocol: tcp
+  #      FromPort: '22'
+  #      ToPort: '22'
+  #      SourceSecurityGroupId: sg-0dbc7ce490f08fb67
+  #      #CidrIp: 0.0.0.0/0
+  #    - IpProtocol: tcp
+  #      FromPort: '5000'
+  #      ToPort: '5000'
+  #      SourceSecurityGroupId: sg-0604f947494edfdc0
+  #      #CidrIp: 0.0.0.0/0
+  #    Tags:
+  #      - Key: Name
+  #        Value: "Private-BE-SEG-CF"
+
+
+Outputs:
+  Website:
+    Description: The Public DNS for the EC2 Instance
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    
+    #!Sub 'http://${ !GetAtt ALBListener.DNSName'}'
+    #'http://${EC2Instance.PublicDnsName}'
+    #,'http://${ALBListener.DNSName}'
+
