@@ -1,0 +1,121 @@
+#vpc-0ec0fe960b0e7d908
+#subnet-018dae2df3b0e7c64  private 1a
+#subnet-0146e0bfe03130d1f  private 1b
+#subnet-0501555ea2906aa31  public 1a
+#subnet-0bb80f94ad675dd2d  public 1b
+#sg-01259517a41e01f04 BE
+#sg-0dbc7ce490f08fb67 Public-Mentor-10-SG
+#ami-08437916891c56642 BE AMI
+#key
+
+Resources:
+  #  myVPC:
+  #    Type: AWS::EC2::VPC
+  #    Properties:
+  #      CidrBlock: 10.0.0.0/16
+  #      EnableDnsSupport: 'false'
+  #      EnableDnsHostnames: 'false'
+  #      InstanceTenancy: dedicated
+  #      Tags:
+  #      - Key: foo
+  #        Value: bar
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+  #-------------------------------------------------------------
+
+
+  # Auto Scaling Launch Configuration
+  LaunchConfiguration:
+    Type: "AWS::AutoScaling::LaunchConfiguration"
+    Properties:
+      AssociatePublicIpAddress: "true"
+      KeyName: "key"
+      ImageId: ami-08437916891c56642
+
+      InstanceType: "t2.micro"
+
+      #IamInstanceProfile:
+      #  Ref: "PMIAMS3CWInstanceProfile"
+      SecurityGroups: ["sg-0a2c9169fe5135f45"]
+        #- !Ref BESecurityGroup
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+
+
+  WaitHandleWEB:
+    Type: "AWS::CloudFormation::WaitConditionHandle"
+
+  WaitCondition:
+    Type: "AWS::CloudFormation::WaitCondition"
+    Properties:
+      Handle: !Ref "WaitHandleWEB"
+      Timeout: '600'
+
+  # Auto Scaling Group Basic Setup
+  WebScalingGroup: 
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    Properties:
+      MinSize: "1"
+      MaxSize: "3"
+      DesiredCapacity: "2"
+      LaunchConfigurationName:
+        Ref: "LaunchConfiguration"
+      VPCZoneIdentifier: [subnet-018dae2df3b0e7c64,subnet-0146e0bfe03130d1f]
+      LoadBalancerNames: 
+        - Ref: TEST-Appli-NWHJPXGAL0AA
+        #Ref: TargetGroup
+      HealthCheckGracePeriod: "300"
+      HealthCheckType: "ELB"
+      Tags:
+      - Key: "Name"
+        Value: "PMServerEnv-WEBserver"
+        PropagateAtLaunch: 'true'
+
+  # Auto ScalingUp Policy - Basic Setup
+  WebServerScaleUpPolicy:
+    Type: "AWS::AutoScaling::ScalingPolicy"
+    Properties:
+      AdjustmentType: "ChangeInCapacity"
+      AutoScalingGroupName:
+        Ref: "WebScalingGroup"
+      Cooldown: '300'
+      ScalingAdjustment: '1'
+
+  # Auto ScalingDown Policy - Basic Setup
+  WebServerScaleDownPolicy:
+    Type: "AWS::AutoScaling::ScalingPolicy"
+    Properties:
+      AdjustmentType: "ChangeInCapacity"
+      AutoScalingGroupName:
+        Ref: "WebScalingGroup"
+      Cooldown: '300'
+      ScalingAdjustment: '-1'
+
+
+
+    
+    #!Sub 'http://${ !GetAtt ALBListener.DNSName'}'
+    #'http://${EC2Instance.PublicDnsName}'
+    #,'http://${ALBListener.DNSName}'
+
+  #WebScalingGroup: 
+  #  Description: "Auto Scaling Group Reference ID"
+  #  Value: !Ref "WebScalingGroup"
+
+  #WebServerScaleUpPolicy: 
+  #  Description: "Auto Scaling Up Policy Reference ID"
+  #  Value: !Ref "WebServerScaleUpPolicy"
+
+  #WebServerScaleDownPolicy: 
+  #  Description: "Auto Scaling Down Policy Reference ID"
+  #  Value: !Ref "WebServerScaleDownPolicy"
